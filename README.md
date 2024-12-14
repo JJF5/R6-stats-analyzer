@@ -6,6 +6,7 @@ The **R6StatsAnalyzer** is a Python class designed to analyze and generate perfo
 
 - Python 3.6 or higher
 - `json` module (standard in Python)
+- r6-dissect (https://github.com/redraskal/r6-dissect)
 
 ## Overview
 
