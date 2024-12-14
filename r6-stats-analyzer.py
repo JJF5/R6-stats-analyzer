@@ -1,5 +1,9 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from tkinter import ttk
+import subprocess
 import json
-from typing import Dict, List, Any
+from typing import Dict, Any, List
 
 class R6StatsAnalyzer:
     def __init__(self, match_data: Dict[str, Any]):
@@ -13,116 +17,52 @@ class R6StatsAnalyzer:
         self.overall_stats = match_data.get('stats', [])
         
     def calculate_kpr(self) -> Dict[str, float]:
-        """
-        Calculate Kills per Round for each player
-        
-        :return: Dictionary of username to KPR
-        """
+        """Calculate Kills per Round for each player"""
         return {
             stat['username']: stat['kills'] / stat['rounds'] 
             for stat in self.overall_stats
         }
     
-    def calculate_teamkills(self) -> Dict[str, int]:
-        """
-        Calculate Teamkills per Round (Note: this example dataset doesn't show teamkills)
-        
-        :return: Dictionary of username to teamkills
-        """
-        # In a real implementation, you'd need additional data tracking teamkills
-        return {stat['username']: 0 for stat in self.overall_stats}
-    
     def calculate_multikills(self) -> Dict[str, int]:
-        """
-        Calculate number of multikills for each player
-        
-        :return: Dictionary of username to multikill count
-        """
+        """Calculate number of multikills for each player"""
         multikills = {stat['username']: 0 for stat in self.overall_stats}
         
         for round_data in self.rounds:
-            # Analyze match feedback to count multikills
             kills_by_player = {}
             for kill in round_data.get('matchFeedback', []):
                 if kill['type']['name'] == 'Kill':
                     username = kill['username']
                     kills_by_player[username] = kills_by_player.get(username, 0) + 1
             
-            # Count players with multiple kills in a round
             for username, kill_count in kills_by_player.items():
                 if kill_count > 1:
                     multikills[username] += 1
         
         return multikills
     
-    def calculate_opening_picks(self) -> Dict[str, Dict[str, int]]:
-        """
-        Calculate opening picks for each player
-        
-        :return: Dictionary of username to opening pick statistics
-        """
-        opening_picks = {stat['username']: {
-            'opening_picks': 0,
-            'opening_deaths': 0
-        } for stat in self.overall_stats}
-        
-        for round_data in self.rounds:
-            match_feedback = round_data.get('matchFeedback', [])
-            if not match_feedback:
-                continue
-            
-            # First kill of the round
-            first_kill = next((kill for kill in match_feedback if kill['type']['name'] == 'Kill'), None)
-            if first_kill:
-                killer = first_kill['username']
-                opening_picks[killer]['opening_picks'] += 1
-            
-            # Check if the first kill's victim was killed
-            if first_kill:
-                victim = first_kill['target']
-                opening_picks[victim]['opening_deaths'] += 1
-        
-        return opening_picks
-    
     def calculate_clutches(self) -> Dict[str, int]:
-        """
-        Calculate clutch rounds for each player
-        
-        :return: Dictionary of username to clutch count
-        """
-        # This is a simplified implementation
-        # A true clutch detection would require more complex round state tracking
+        """Calculate clutch rounds for each player"""
         clutches = {stat['username']: 0 for stat in self.overall_stats}
         
         for round_data in self.rounds:
             match_feedback = round_data.get('matchFeedback', [])
-            
-            # Safely access the 'id' from the teams data
             teams = round_data.get('teams', [])
             
-            # Check if there are enough teams and if the 'id' key exists
             if len(teams) > 1 and 'id' in teams[1]:
                 team_id = teams[1]['id']
             else:
-                # Handle missing 'id' or insufficient teams (e.g., skipping or setting a default value)
-                team_id = None  # You can replace 'None' with another default value if needed
+                team_id = None
             
-            # Debug: Print team_id for the current round to ensure it's being handled correctly
-            print("Using team_id:", team_id)
-            
-            # Identify the players that belong to the second team (team 2)
             living_players = {
                 player['username'] for player in round_data.get('players', []) 
                 if player['teamIndex'] == team_id
             }
             
-            # Simple clutch detection: last player alive who gets kills
             kills_by_last_player = {}
             for kill in match_feedback:
                 if kill['type']['name'] == 'Kill' and kill['username'] in living_players:
                     kills_by_last_player[kill['username']] = kills_by_last_player.get(kill['username'], 0) + 1
             
-            # Mark clutches (simplified)
             for username, kill_count in kills_by_last_player.items():
                 if kill_count > 1:
                     clutches[username] += 1
@@ -130,11 +70,7 @@ class R6StatsAnalyzer:
         return clutches
     
     def calculate_kost(self) -> Dict[str, float]:
-        """
-        Calculate KOST (Kill, Objective, Survived, Traded) percentage
-        
-        :return: Dictionary of username to KOST percentage
-        """
+        """Calculate KOST (Kill, Objective, Survived, Traded) percentage"""
         kost = {stat['username']: 0.0 for stat in self.overall_stats}
         total_rounds = len(self.rounds)
         
@@ -144,60 +80,32 @@ class R6StatsAnalyzer:
             
             for player_stat in round_stats:
                 username = player_stat['username']
-                
-                # Check if player got a kill
                 player_kills = [kill for kill in match_feedback if kill['username'] == username]
-                
-                # Check if player survived
                 player_survived = not player_stat['died']
                 
-                # Simplified KOST calculation
                 if player_kills or player_survived:
                     kost[username] += 1.0 / total_rounds
         
         return kost
     
     def calculate_survival_rate(self) -> Dict[str, float]:
-        """
-        Calculate Survival Rate
-        
-        :return: Dictionary of username to Survival Rate
-        """
+        """Calculate Survival Rate"""
         return {
             stat['username']: 1 - (stat['deaths'] / stat['rounds']) 
             for stat in self.overall_stats
         }
     
-    def calculate_trade_differential(self) -> Dict[str, int]:
-        """
-        Calculate Trade Differential
-        (Simplified due to limited data)
-        
-        :return: Dictionary of username to Trade Differential
-        """
-        # This would require more complex tracking of trades
-        return {stat['username']: 0 for stat in self.overall_stats}
-    
     def calculate_headshot_rate(self) -> Dict[str, float]:
-        """
-        Calculate Headshot Rate
-        
-        :return: Dictionary of username to Headshot Rate
-        """
+        """Calculate Headshot Rate"""
         return {
             stat['username']: stat['headshotPercentage'] / 100.0 
             for stat in self.overall_stats
         }
     
     def generate_player_performance_report(self) -> List[Dict[str, Any]]:
-        """
-        Generate a comprehensive performance report for each player
-        
-        :return: List of dictionaries with player performance metrics
-        """
+        """Generate a comprehensive performance report for each player"""
         kpr = self.calculate_kpr()
         multikills = self.calculate_multikills()
-        opening_picks = self.calculate_opening_picks()
         clutches = self.calculate_clutches()
         kost = self.calculate_kost()
         survival_rate = self.calculate_survival_rate()
@@ -210,8 +118,6 @@ class R6StatsAnalyzer:
                 'Username': username,
                 'Kills per Round': kpr.get(username, 0),
                 'Multikills': multikills.get(username, 0),
-                'Opening Picks': opening_picks.get(username, {}).get('opening_picks', 0),
-                'Opening Deaths': opening_picks.get(username, {}).get('opening_deaths', 0),
                 'Clutches': clutches.get(username, 0),
                 'KOST %': kost.get(username, 0) * 100,
                 'Survival Rate': survival_rate.get(username, 0),
@@ -223,38 +129,113 @@ class R6StatsAnalyzer:
         
         return report
 
-# Example usage
+class R6DissectGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("R6 Dissect GUI")
+        self.root.geometry("1920x600")
+        
+        # Label for instructions
+        self.label = tk.Label(self.root, text="Select Match Folder and Output JSON File")
+        self.label.pack(pady=10)
+        
+        # Folder selection button
+        self.select_folder_button = tk.Button(self.root, text="Select Match Folder", command=self.select_folder)
+        self.select_folder_button.pack(pady=5)
+        
+        # Label to show selected folder
+        self.folder_label = tk.Label(self.root, text="No folder selected")
+        self.folder_label.pack(pady=5)
+        
+        # Output file selection button
+        self.select_output_button = tk.Button(self.root, text="Select Output JSON File", command=self.select_output_file)
+        self.select_output_button.pack(pady=5)
+        
+        # Label to show selected output file
+        self.output_label = tk.Label(self.root, text="No output file selected")
+        self.output_label.pack(pady=5)
+        
+        # Process button
+        self.process_button = tk.Button(self.root, text="Process and Export", command=self.process)
+        self.process_button.pack(pady=15)
+        
+        # Table to display the stats
+        self.treeview = ttk.Treeview(self.root, columns=("Username", "Kills per Round", "Multikills", "Clutches", "KOST %", "Survival Rate", "Headshot Rate", "Total Kills", "Total Deaths"), show="headings")
+        self.treeview.pack(fill=tk.BOTH, expand=True)
+        
+        for col in self.treeview["columns"]:
+            self.treeview.heading(col, text=col)
+            self.treeview.column(col, anchor="center")
+        
+        # Variables to store selected folder and output file paths
+        self.match_folder = None
+        self.output_file = None
+
+    def select_folder(self):
+        """Open a folder dialog to select the match folder."""
+        folder_path = filedialog.askdirectory(title="Select Match Folder")
+        if folder_path:
+            self.match_folder = folder_path
+            self.folder_label.config(text=f"Selected Folder: {self.match_folder}")
+    
+    def select_output_file(self):
+        """Open a file save dialog to select the output JSON file."""
+        output_path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON Files", "*.json")], title="Save Output as JSON")
+        if output_path:
+            self.output_file = output_path
+            self.output_label.config(text=f"Selected File: {self.output_file}")
+
+    def process(self):
+        """Execute the r6-dissect command with selected folder and output file."""
+        if not self.match_folder or not self.output_file:
+            messagebox.showerror("Error", "Please select both the match folder and output file.")
+            return
+        
+        try:
+            # Construct the command to run r6-dissect
+            command = ["r6-dissect", self.match_folder, "-o", self.output_file]
+            
+            # Run the command
+            subprocess.run(command, check=True)
+            
+            # Load the match data from the generated JSON
+            with open(self.output_file, 'r') as file:
+                match_data = json.load(file)
+            
+            # Create analyzer and generate the performance report
+            analyzer = R6StatsAnalyzer(match_data)
+            performance_report = analyzer.generate_player_performance_report()
+
+            # Clear previous table rows
+            for row in self.treeview.get_children():
+                self.treeview.delete(row)
+            
+            # Add the new data into the table
+            for player_stats in performance_report:
+                self.treeview.insert("", "end", values=(
+                    player_stats['Username'],
+                    f"{player_stats['Kills per Round']:.2f}",
+                    player_stats['Multikills'],
+                    player_stats['Clutches'],
+                    f"{player_stats['KOST %']:.2f}",
+                    f"{player_stats['Survival Rate']:.2f}",
+                    f"{player_stats['Headshot Rate']:.2f}",
+                    player_stats['Total Kills'],
+                    player_stats['Total Deaths']
+                ))
+                
+        except subprocess.CalledProcessError as e:
+            messagebox.showerror("Error", f"An error occurred while processing the data: {e}")
+        except json.JSONDecodeError:
+            messagebox.showerror("Error", "Failed to decode JSON from the r6-dissect output.")
+        except Exception as e:
+            messagebox.showerror("Error", f"An unexpected error occurred: {e}")
+
+# Create the GUI window and start the application
 def main():
-    # Load the JSON file from the specific path
-    json_file_path = r'C:\Users\JJF5\Desktop\siegegg\test.json'
-    
-    try:
-        with open(json_file_path, 'r') as file:
-            match_data = json.load(file)
-    except FileNotFoundError:
-        print(f"Error: File not found at {json_file_path}")
-        return
-    except json.JSONDecodeError:
-        print(f"Error: Invalid JSON in the file at {json_file_path}")
-        return
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-        return
-    
-    # Create analyzer
-    analyzer = R6StatsAnalyzer(match_data)
-    
-    # Generate and print performance report
-    performance_report = analyzer.generate_player_performance_report()
-    
-    print("Player Performance Report:")
-    for player_stats in performance_report:
-        print("\n--- {} ---".format(player_stats['Username']))
-        for metric, value in player_stats.items():
-            if isinstance(value, float):
-                print(f"{metric}: {value:.2f}")
-            else:
-                print(f"{metric}: {value}")
+    root = tk.Tk()
+    app = R6DissectGUI(root)
+    root.mainloop()
 
 if __name__ == "__main__":
     main()
