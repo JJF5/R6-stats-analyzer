@@ -45,31 +45,123 @@ class R6StatsAnalyzer:
         return multikills
 
     def calculate_clutches(self) -> Dict[str, int]:
-        """Calculate clutch rounds for each player"""
+        """
+        Calculate 1vX clutch rounds for each player
+        
+        A clutch is defined as a situation where a player is the last alive on their team
+        and successfully wins the round against multiple opponents.
+        """
         clutches = {stat.get('username', 'Unknown'): 0 for stat in self.overall_stats}
         
         for round_data in self.rounds:
             match_feedback = round_data.get('matchFeedback', []) or []
             teams = round_data.get('teams', []) or []
             
-            team_id = None
-            if len(teams) > 1 and isinstance(teams[1], dict) and 'id' in teams[1]:
-                team_id = teams[1]['id']
-            
-            living_players = set()
+            if len(teams) < 2:
+                continue
+                
+            # Track players on each team
+            team_players = {}
             for player in round_data.get('players', []) or []:
-                if isinstance(player, dict) and player.get('teamIndex') == team_id and 'username' in player:
-                    living_players.add(player['username'])
+                if not isinstance(player, dict) or 'teamIndex' not in player or 'username' not in player:
+                    continue
+                    
+                team_id = player.get('teamIndex')
+                if team_id not in team_players:
+                    team_players[team_id] = []
+                team_players[team_id].append(player.get('username'))
             
-            kills_by_last_player = {}
-            for kill in match_feedback:
-                if isinstance(kill, dict) and kill.get('type', {}).get('name') == 'Kill' and kill.get('username') in living_players:
-                    username = kill.get('username', 'Unknown')
-                    kills_by_last_player[username] = kills_by_last_player.get(username, 0) + 1
+            # Track which team won this round
+            winning_team = None
+            for event in match_feedback:
+                if isinstance(event, dict) and event.get('type', {}).get('name') == 'RoundEnd':
+                    winning_team = event.get('winner')
+                    break
             
-            for username, kill_count in kills_by_last_player.items():
-                if kill_count > 1:
-                    clutches[username] = clutches.get(username, 0) + 1
+            if winning_team is None:
+                continue  # Can't determine winning team
+                
+            # Initialize alive players for each team
+            alive_players = {}
+            for team_id, players in team_players.items():
+                alive_players[team_id] = set(players)
+            
+            # Find which team_id corresponds to the winning team name
+            winning_team_id = None
+            for team_id, team_obj in enumerate(teams):
+                if isinstance(team_obj, dict) and team_obj.get('name') == winning_team:
+                    winning_team_id = team_id
+                    break
+            
+            if winning_team_id is None:
+                continue  # Can't determine winning team ID
+            
+            # Process kills chronologically to track who's alive
+            clutch_candidate = None
+            enemy_count_at_clutch_start = 0
+            clutch_started = False
+            
+            for event in match_feedback:
+                if not isinstance(event, dict):
+                    continue
+                    
+                event_type = event.get('type', {}).get('name')
+                
+                if event_type in ('Kill', 'TeamKill'):
+                    # Update alive players based on who died
+                    target = event.get('target')
+                    if not target:
+                        continue
+                        
+                    # Find which team the target was on
+                    target_team = None
+                    for team_id, players in team_players.items():
+                        if target in players:
+                            target_team = team_id
+                            break
+                    
+                    if target_team is not None:
+                        # Remove player from alive players
+                        if target in alive_players.get(target_team, set()):
+                            alive_players[target_team].remove(target)
+                        
+                        # Check if this creates a clutch situation
+                        if target_team == winning_team_id and len(alive_players[winning_team_id]) == 1 and not clutch_started:
+                            clutch_candidate = next(iter(alive_players[winning_team_id]))
+                            # Count alive enemies at clutch start
+                            enemy_count_at_clutch_start = sum(len(alive_players[t]) for t in alive_players if t != winning_team_id)
+                            
+                            # Only consider it a potential clutch if there are multiple enemies
+                            if enemy_count_at_clutch_start >= 2:
+                                clutch_started = True
+            
+            # If clutch situation was identified and the winning team had a single player at the end
+            if clutch_started and clutch_candidate and len(alive_players[winning_team_id]) == 1:
+                # Find how many kills the clutch candidate got after clutch situation started
+                kills_after_clutch = 0
+                clutch_event_index = 0
+                
+                # Find index where clutch started
+                for i, event in enumerate(match_feedback):
+                    if isinstance(event, dict) and event.get('type', {}).get('name') in ('Kill', 'TeamKill'):
+                        target = event.get('target')
+                        for team_id, players in team_players.items():
+                            if target in players and team_id == winning_team_id:
+                                alive_count = sum(1 for p in players if p not in [e.get('target') for e in match_feedback[:i+1] 
+                                                 if isinstance(e, dict) and e.get('type', {}).get('name') in ('Kill', 'TeamKill')])
+                                if alive_count == 1:
+                                    clutch_event_index = i
+                                    break
+                
+                # Count the clutch player's kills after clutch start
+                for event in match_feedback[clutch_event_index+1:]:
+                    if isinstance(event, dict) and event.get('type', {}).get('name') == 'Kill':
+                        if event.get('username') == clutch_candidate:
+                            kills_after_clutch += 1
+                
+                # If the player got at least one kill or faced 3+ enemies, count it as a clutch
+                if kills_after_clutch > 0 or enemy_count_at_clutch_start >= 3:
+                    clutches[clutch_candidate] = clutches.get(clutch_candidate, 0) + 1
         
         return clutches
 
@@ -238,6 +330,14 @@ class R6StatsAnalyzer:
                 description = "Round Started"
             elif event_type == 'RoundEnd':
                 description = f"Round Ended - Winner: {event.get('winner', 'Unknown')}"
+            elif event_type == 'OperatorSwap':
+                # Handle operator swap events
+                username = event.get('username', 'Unknown')
+                # Get the 'from' operator
+                from_operator = event.get('fromOperator', {}).get('name', 'Unknown')
+                # Get the 'to' operator
+                to_operator = event.get('toOperator', {}).get('name', 'Unknown')
+                description = f"{username} swapped from {from_operator} to {to_operator}"
             
             events.append({
                 'timestamp': timestamp,
